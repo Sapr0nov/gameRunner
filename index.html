@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+		<title>robot</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link type="text/css" rel="stylesheet" href="./css/style.css">
+	</head>
+	<body>
+		<div id="info">
+		</div>
+		<script type="module">
+			import * as THREE from './js/three.module.js';
+			import Stats from './js/stats.module.js';
+			import { GUI } from './js/dat.gui.module.js';
+			import { GLTFLoader } from './js/GLTFLoader.js';
+
+			let container, stats, clock, gui, mixer, actions, activeAction, previousAction;
+			let camera, scene, renderer, model, face;
+			let ground, materialsBG, timeLeft = 0;
+			const api = { state: 'Running' };
+			let animations;
+			let pauseGame = false;
+			const hurdles = [];
+			var di = 0.01;
+				var i = di; 
+				var r = 20;
+
+
+			actions = {};
+			var states = [ 'Idle', 'Walking', 'Running', 'Dance', 'Sitting', 'Standing', 'Death' ];
+			var emotes = [ 'Jump', 'Yes', 'No', 'Wave', 'Punch', 'ThumbsUp' ];
+
+			init();
+			animate();
+
+			function init() {
+
+				container = document.createElement( 'div' );
+				document.body.appendChild( container );
+
+//				var frustr = 600;
+				camera = new THREE.PerspectiveCamera( 120, window.innerWidth / window.innerHeight, 0.25, 100 );
+//				camera = new THREE.OrthographicCamera( 0.5 * frustr * window.innerWidth / window.innerHeight / -2, 0.5 * frustr * window.innerWidth / window.innerHeight / 2, frustr / 2, frustr / -2, 150, 1000);
+				camera.position.set( 0, 8, -10 );
+				camera.lookAt( new THREE.Vector3( 0, 10, 0 ) );
+
+				scene = new THREE.Scene();
+				scene.background = new THREE.Color( 0x333366 );
+				scene.fog = new THREE.Fog( 0xffffff, 0, 95 );
+
+				clock = new THREE.Clock();
+
+				// lights
+
+				const light1 = new THREE.HemisphereLight( 0xffffff, 0x444444 );
+				light1.position.set( 0, 20, 0 );
+//				scene.add( light1 );
+
+				const light2 = new THREE.DirectionalLight( 0xffffff );
+				light2.position.set( 0, 20, 10 );
+				scene.add( light2 );
+			
+				const geometryBG = new THREE.BoxGeometry( 50, 80, 140 );
+				materialsBG = 
+					[
+						new THREE.MeshBasicMaterial ( {map: new THREE.TextureLoader().load('./img/bg_left.jpg'), side: THREE.DoubleSide}),
+						new THREE.MeshBasicMaterial ( {map: new THREE.TextureLoader().load('./img/bg_right.jpg'), side: THREE.DoubleSide}),
+						new THREE.MeshBasicMaterial ( {map: new THREE.TextureLoader().load('./img/bg_top.jpg'), side: THREE.DoubleSide}),
+						new THREE.MeshBasicMaterial ( {map: new THREE.TextureLoader().load('./img/none.jpg'), side: THREE.DoubleSide}),
+						new THREE.MeshBasicMaterial ( {map: new THREE.TextureLoader().load('./img/bg_forward.jpg'), side: THREE.DoubleSide}),
+						new THREE.MeshBasicMaterial ( {map: new THREE.TextureLoader().load('./img/bg_right.jpg'), side: THREE.DoubleSide}),
+					];
+
+				for (let i = 0; i<3; i++) {
+					materialsBG[i].map.matrixAutoUpdate = true;
+					materialsBG[i].map.wrapS = THREE.RepeatWrapping;
+					materialsBG[i].map.wrapT = THREE.RepeatWrapping;
+					materialsBG[i].map.repeat.set( 2, 1 );
+				}
+				materialsBG[2].map.repeat.set( 1, 2 );
+
+				const materialBG = new THREE.MeshFaceMaterial(materialsBG);
+
+				const background = new THREE.Mesh( geometryBG, materialBG );
+				background.position.y = 20;
+				scene.add( background );
+	
+				// ground
+				const geometry = new THREE.CylinderGeometry( 1000, 1000, 50, 200 );
+				const roadTexture = new THREE.TextureLoader().load('./img/road.jpg');
+				roadTexture.wrapS = THREE.RepeatWrapping;
+				roadTexture.wrapT = THREE.RepeatWrapping;
+				roadTexture.repeat.set( 400, 4 );
+
+				const material = new THREE.MeshBasicMaterial( {map: roadTexture, side: THREE.DoubleSide} );
+				ground = new THREE.Mesh( geometry, material );
+				ground.position.set(0,-998,70);
+				ground.rotation.z = Math.PI / 2;
+				scene.add( ground );
+
+				// model
+
+				const loader = new GLTFLoader();
+				loader.load( 'model/robot.glb', function ( gltf ) {
+					model = gltf.scene;
+					scene.add( model );
+					model.position.y = 0;
+					model.position.z = 0;
+					animations = gltf.animations;
+					mixer = new THREE.AnimationMixer( model );
+					for ( let i = 0; i < animations.length; i ++ ) {
+						console.log(i);
+						const clip = animations[ i ];
+						const action = mixer.clipAction( clip );
+								if (animations[ i ].name === 'Death') {
+									console.log(animations[i]);
+									console.log(action);
+								}
+						actions[ clip.name ] = action;
+
+						if ( emotes.indexOf( clip.name ) >= 0 || states.indexOf( clip.name ) >= 4 ) {
+							action.clampWhenFinished = true;
+							action.loop = THREE.LoopOnce;
+						}
+					}	
+
+					actions['Running'].play();
+					previousAction = actions['Running'];
+
+				}, undefined, function ( e ) {
+					console.error( e );
+				} );
+
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.outputEncoding = THREE.sRGBEncoding;
+				container.appendChild( renderer.domElement );
+
+				window.addEventListener( 'resize', onWindowResize, false );
+				// stats
+				stats = new Stats();
+				container.appendChild( stats.dom );
+			}
+
+			function fadeToAction( name, duration ) {
+				activeAction = actions[name];
+				previousAction.fadeOut( duration );
+
+				console.log(activeAction);
+				if (name === 'Death') {
+					activeAction
+					.reset()
+					.setEffectiveTimeScale( 1 )
+					.setEffectiveWeight( 20 )
+					.fadeIn( duration )
+					.play();
+					
+					return;
+				}
+
+				activeAction
+					.reset()
+					.setEffectiveTimeScale( 1 )
+					.setEffectiveWeight( 1 )
+					.fadeIn( duration )
+					.play();
+
+				setTimeout(() => {
+					console.log('runNext');
+					previousAction.fadeIn(duration).play();
+					actions['Running']	
+						.reset()
+						.setEffectiveTimeScale( 1 )
+						.setEffectiveWeight( 1 )
+						.fadeIn( duration )
+						.play();
+						model.position.y = 0;
+				}
+				, 500);
+			}
+
+			function onWindowResize() {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+			}
+			
+			function animate() {
+			if (timeLeft > 100) {
+				generateHurdle();
+				timeLeft = 0;
+			}
+			timeLeft += 1;
+
+			const dt = clock.getDelta();
+			if (pauseGame) {
+				cameraRound();
+			}else{
+				ground.rotation.x -= 0.0005;
+				materialsBG[0].map.offset.x -= 0.006;
+				materialsBG[1].map.offset.x += 0.006;
+				materialsBG[2].map.offset.y -= 0.006;
+				hurdles.forEach( (hurdle, index) => {
+					hurdle.position.y -= 0.01;
+					hurdle.position.z -= 0.8;
+
+					if ( 	Math.floor(hurdle.position.x) === Math.floor(model.position.x) &&
+							Math.floor(hurdle.position.y + 2) > Math.floor(model.position.y) &&
+							Math.floor(hurdle.position.z) > Math.floor(model.position.z ) &&
+							Math.floor(hurdle.position.z) < Math.floor(model.position.z + 6) 
+							 ) {
+						endGame();
+						return;
+					}
+					if (hurdle.position.z < -10) {
+						hurdles.splice(index,1);
+						scene.remove(hurdle);
+					};
+				})
+			}
+				if ( mixer ) mixer.update( dt );
+				requestAnimationFrame( animate );
+				renderer.render( scene, camera );
+				stats.update();
+			}
+
+			document.addEventListener("DOMContentLoaded", e => {
+			
+			document.addEventListener("keydown", e => {
+					console.log(e.keyCode);
+					switch (e.keyCode) {
+						case 32 : 
+									fadeToAction('Jump',0.2); 
+									const up = setInterval(JumpUp, 20);
+									setTimeout( () => {
+										clearInterval(up);
+										const down = setInterval(JumpDown, 20);
+										setTimeout( () => {
+											clearInterval(down);
+										},200)
+									}, 280);
+									
+
+									break;
+						case 49 : fadeToAction('Yes',0.5); break;
+						case 50 : fadeToAction('Idle',0.5); break;
+						case 51 : fadeToAction('Walking',0.5); break;
+						case 52 : fadeToAction('Standing',0.5); break;
+						case 53 : fadeToAction('No',0.5); break;
+						
+						case 65 : moveLeft(); break;
+						case 68 : moveRight(); break;
+						case 27 : endGame(); break;
+
+					}
+				});
+			})
+
+			const JumpUp = () => {
+				model.position.y += 0.6;
+			}
+			const JumpDown = () => {
+				model.position.y -= 0.6;
+			}
+			const moveRight = () => {
+				if (model.position.x <= -10 ) return;
+				model.position.x -= 5;
+			}
+			const moveLeft = () => {
+				if (model.position.x >= 10 ) return;
+				model.position.x += 5;
+			}
+
+			const endGame = () => {
+				pauseGame = !pauseGame;
+				fadeToAction('Death',0.5);
+
+			}
+			const cameraRound = () => {
+				i += di;
+				camera.position.y = 5;
+				camera.position.x = -Math.sin(i)*r;
+				camera.position.z = Math.cos(i)*r;
+				camera.lookAt( new THREE.Vector3( 0, 3, 0 ) );
+			}
+			const generateHurdle = () => {
+				const geometryBox = new THREE.BoxGeometry( 4, 4, 4 );
+				const textureBox = new THREE.TextureLoader().load('./img/box.jpg');
+				const materialBox = new THREE.MeshBasicMaterial( {map: textureBox } );
+				const hurdle = new THREE.Mesh( geometryBox, materialBox );
+				let x = -15 + (1 + Math.floor(Math.random() * 5)) * 5;
+				hurdle.position.set(x, 3, 70);
+				hurdles.push(hurdle);
+				scene.add( hurdle );
+			}
+		</script>
+
+	</body>
+</html>
