@@ -9,7 +9,10 @@
 	<body>
 		<div id="info">
 		</div>
+		<div id="score">
+		</div>
 		<script type="module">
+
 			import * as THREE from './js/three.module.js';
 			import Stats from './js/stats.module.js';
 			import { GUI } from './js/dat.gui.module.js';
@@ -17,19 +20,188 @@
 
 			let container, stats, clock, gui, mixer, actions, activeAction, previousAction;
 			let camera, scene, renderer, model, face;
-			let ground, materialsBG, timeLeft = 0;
+			let ground, materialsBG, sun, dxSun = 1, score = 0, timeLeft = 0;
+			const scoreDiv = document.querySelector('#score');
+			scoreDiv.innerHTML = score;
 			const api = { state: 'Running' };
+			const hurdles = [];
 			let animations;
 			let pauseGame = false;
-			const hurdles = [];
-			var di = 0.01;
-				var i = di; 
-				var r = 20;
+			let di = 0.01;
+			let i = di; 
+			let r = 20;
+
+			/**
+			* Determinate access events in browser: pointer, touch и mouse.
+			* @returns {object} - return object with event names.
+			*/
+			const swipe = (el, settings) => {
+				// default setting
+				settings = Object.assign({}, {
+					minDist: 60,
+					maxDist: 120,
+					maxTime: 700,
+					minTime: 50
+				}, settings);
+
+				// correct time when error value
+				if (settings.maxTime < settings.minTime) settings.maxTime = settings.minTime + 500;
+				if (settings.maxTime < 100 || settings.minTime < 50) {
+				settings.maxTime = 700;
+				settings.minTime = 50;
+				}
+
+				let dir;                  // swipe direction  (horizontal, vertical)
+				let swipeType;            // type swipe (up, down, left, right)
+				let dist;                 // distance
+				let isMouse = false;      // legacy mouse (don't need when tach events)
+				let isMouseDown = false;  // press mouse button (don't need when tach events)
+				let startX = 0;           // begin of ort X (pageX)
+				let distX = 0;            // distance by X
+				let startY = 0;           // begin of ort Y (pageY)
+				let distY = 0;            // distance by Y
+				let startTime = 0;        // time the 1st touch
+				const support = {           // support events by browser
+					pointer: !!("PointerEvent" in window || ("msPointerEnabled" in window.navigator)),
+					touch: !!(typeof window.orientation !== "undefined" || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || "ontouchstart" in window || navigator.msMaxTouchPoints || "maxTouchPoints" in window.navigator > 1 || "msMaxTouchPoints" in window.navigator > 1)
+				};
+
+				/**
+				* Determinate access events: pointer, touch и mouse.
+				* @returns {Object} - return object with access events
+				*/
+				const getSupportedEvents = () => {
+					let events;
+					switch (true) {
+						case support.touch:
+						events = {
+							type:   "touch",
+							start:  "touchstart",
+							move:   "touchmove",
+							end:    "touchend",
+							cancel: "touchcancel"
+						};
+						break;
+						case support.pointer:
+						events = {
+							type:   "pointer",
+							start:  "PointerDown",
+							move:   "PointerMove",
+							end:    "PointerUp",
+							cancel: "PointerCancel",
+							leave:  "PointerLeave"
+						};
+						break;
+						default:
+						events = {
+							type:  "mouse",
+							start: "mousedown",
+							move:  "mousemove",
+							end:   "mouseup",
+							leave: "mouseleave"
+						};
+						break;
+					}
+					return events;
+				};
+
+
+				/**
+				* Combine events mouse/pointer и touch.
+				* @param e {Event} - get as argument event.
+				* @returns {TouchList|Event} - return TouchList, or event without change.
+				*/
+				const eventsUnify = e => {
+					return e.changedTouches ? e.changedTouches[0] : e;
+				};
+
+
+				/**
+				* Listener start event.
+				* @param e {Event} - get event.
+				*/
+				const checkStart = e => {
+					const event = eventsUnify(e);
+					if (support.touch && typeof e.touches !== "undefined" && e.touches.length !== 1) return; // ignore multi touch
+					dir = "none";
+					swipeType = "none";
+					dist = 0;
+					startX = event.pageX;
+					startY = event.pageY;
+					startTime = new Date().getTime();
+					if (isMouse) isMouseDown = true; // legacy mouse
+					e.preventDefault();
+				};
+
+				/**
+				* Listener move pointer.
+				* @param e {Event} - get event.
+				*/
+				const checkMove = e => {
+					if (isMouse && !isMouseDown) return; // exit from function, if mouse don't active 			
+					const event = eventsUnify(e);
+					distX = event.pageX - startX;
+					distY = event.pageY - startY;
+					if (Math.abs(distX) > Math.abs(distY)) dir = (distX < 0) ? "left" : "right";
+					else dir = (distY < 0) ? "up" : "down";
+					e.preventDefault();
+				};
+
+				/**
+				* Listener end touch pointer.
+				* @param e {Event} - get event.
+				*/
+				const checkEnd = e => {
+					if (isMouse && !isMouseDown) { // выход из функции и сброс проверки нажатия мыши
+						mouseDown = false;
+						return;
+					}
+					const endTime = new Date().getTime();
+					const time = endTime - startTime;
+					if (time >= settings.minTime && time <= settings.maxTime) { // проверка времени жеста
+						if (Math.abs(distX) >= settings.minDist && Math.abs(distY) <= settings.maxDist) {
+						swipeType = dir; // опредление типа свайпа как "left" или "right"
+						} else if (Math.abs(distY) >= settings.minDist && Math.abs(distX) <= settings.maxDist) {
+						swipeType = dir; // опредление типа свайпа как "top" или "down"
+						}
+					}
+					dist = (dir === "left" || dir === "right") ? Math.abs(distX) : Math.abs(distY); // determinate distance
+
+					// genereation custom event swipe
+					if (swipeType !== "none" && dist >= settings.minDist) {
+						const swipeEvent = new CustomEvent("swipe", {
+							bubbles: true,
+							cancelable: true,
+							detail: {
+							full: e, // full Event
+							dir:  swipeType, // direction swipe
+							dist: dist, // distance swipe
+							time: time // time, while do swipe
+							}
+						});
+						el.dispatchEvent(swipeEvent);
+					}
+					e.preventDefault();
+				};
+
+				// add supported events
+				const events = getSupportedEvents();
+
+				// check mouse
+				if ((support.pointer && !support.touch) || events.type === "mouse") isMouse = true;
+
+				// add Listener on Element
+				el.addEventListener(events.start, checkStart, { passive: false });
+				el.addEventListener(events.move, checkMove, { passive: false });
+				el.addEventListener(events.end, checkEnd, { passive: false });
+
+			};
+
 
 
 			actions = {};
-			var states = [ 'Idle', 'Walking', 'Running', 'Dance', 'Sitting', 'Standing', 'Death' ];
-			var emotes = [ 'Jump', 'Yes', 'No', 'Wave', 'Punch', 'ThumbsUp' ];
+			const states = [ 'Idle', 'Walking', 'Running', 'Dance', 'Sitting', 'Standing', 'Death' ];
+			const emotes = [ 'Jump', 'Yes', 'No', 'Wave', 'Punch', 'ThumbsUp' ];
 
 			init();
 			animate();
@@ -39,9 +211,9 @@
 				container = document.createElement( 'div' );
 				document.body.appendChild( container );
 
-//				var frustr = 600;
-				camera = new THREE.PerspectiveCamera( 120, window.innerWidth / window.innerHeight, 0.25, 100 );
+//				const  frustr = 600;
 //				camera = new THREE.OrthographicCamera( 0.5 * frustr * window.innerWidth / window.innerHeight / -2, 0.5 * frustr * window.innerWidth / window.innerHeight / 2, frustr / 2, frustr / -2, 150, 1000);
+				camera = new THREE.PerspectiveCamera( 120, window.innerWidth / window.innerHeight, 0.25, 100 );
 				camera.position.set( 0, 8, -10 );
 				camera.lookAt( new THREE.Vector3( 0, 10, 0 ) );
 
@@ -53,13 +225,13 @@
 
 				// lights
 
-				const light1 = new THREE.HemisphereLight( 0xffffff, 0x444444 );
-				light1.position.set( 0, 20, 0 );
-//				scene.add( light1 );
+				const light1 = new THREE.HemisphereLight( 0xcccccc, 0x444444 );
+				light1.position.set( 0, 100, 0 );
+		//		scene.add( light1 );
 
-				const light2 = new THREE.DirectionalLight( 0xffffff );
-				light2.position.set( 0, 20, 10 );
-				scene.add( light2 );
+				sun = new THREE.DirectionalLight( 0xf8de7e );
+				sun.position.set( -10, 20, -10 );
+				scene.add(sun);
 			
 				const geometryBG = new THREE.BoxGeometry( 50, 80, 140 );
 				materialsBG = 
@@ -81,7 +253,6 @@
 				materialsBG[2].map.repeat.set( 1, 2 );
 
 				const materialBG = new THREE.MeshFaceMaterial(materialsBG);
-
 				const background = new THREE.Mesh( geometryBG, materialBG );
 				background.position.y = 20;
 				scene.add( background );
@@ -110,13 +281,8 @@
 					animations = gltf.animations;
 					mixer = new THREE.AnimationMixer( model );
 					for ( let i = 0; i < animations.length; i ++ ) {
-						console.log(i);
 						const clip = animations[ i ];
 						const action = mixer.clipAction( clip );
-								if (animations[ i ].name === 'Death') {
-									console.log(animations[i]);
-									console.log(action);
-								}
 						actions[ clip.name ] = action;
 
 						if ( emotes.indexOf( clip.name ) >= 0 || states.indexOf( clip.name ) >= 4 ) {
@@ -148,7 +314,6 @@
 				activeAction = actions[name];
 				previousAction.fadeOut( duration );
 
-				console.log(activeAction);
 				if (name === 'Death') {
 					activeAction
 					.reset()
@@ -157,6 +322,9 @@
 					.fadeIn( duration )
 					.play();
 					
+					setTimeout( () => {
+						actions['Running'].setEffectiveWeight(0);
+					}, 400)
 					return;
 				}
 
@@ -168,12 +336,11 @@
 					.play();
 
 				setTimeout(() => {
-					console.log('runNext');
 					previousAction.fadeIn(duration).play();
 					actions['Running']	
 						.reset()
 						.setEffectiveTimeScale( 1 )
-						.setEffectiveWeight( 1 )
+						.setEffectiveWeight( 10 )
 						.fadeIn( duration )
 						.play();
 						model.position.y = 0;
@@ -189,10 +356,13 @@
 			
 			function animate() {
 			if (timeLeft > 100) {
+				dxSun = -dxSun;
 				generateHurdle();
 				timeLeft = 0;
 			}
 			timeLeft += 1;
+			sun.position.x += dxSun / 10;
+			sun.position.z += dxSun / 10;
 
 			const dt = clock.getDelta();
 			if (pauseGame) {
@@ -216,6 +386,8 @@
 					}
 					if (hurdle.position.z < -10) {
 						hurdles.splice(index,1);
+						score += 100;
+						scoreDiv.innerHTML = score;
 						scene.remove(hurdle);
 					};
 				})
@@ -226,75 +398,99 @@
 				stats.update();
 			}
 
-			document.addEventListener("DOMContentLoaded", e => {
+
+		document.addEventListener("DOMContentLoaded", e => {
+			swipe(document, { maxTime: 1000, minTime: 20, maxDist: 150,  minDist: 10 });
+
+			document.addEventListener("swipe", function(e) {
+				if (pauseGame) {
+					return;
+				}
+				switch (e.detail.dir) {
+					case 'up' : 
+								fadeToAction('Jump',0.2); 
+								const up = setInterval(JumpUp, 20);
+								setTimeout( () => {
+									clearInterval(up);
+									const down = setInterval(JumpDown, 20);
+									setTimeout( () => {
+										clearInterval(down);
+									},200)
+								}, 280);
+								break;
+					
+					case  'left' : moveLeft(); break;
+					case  'right' : moveRight(); break;
+				}		
+			});
 			
 			document.addEventListener("keydown", e => {
-					console.log(e.keyCode);
-					switch (e.keyCode) {
-						case 32 : 
-									fadeToAction('Jump',0.2); 
-									const up = setInterval(JumpUp, 20);
+				if (pauseGame) {
+					return;
+				}
+				switch (e.keyCode) {
+					case 32 : 
+								fadeToAction('Jump',0.2); 
+								const up = setInterval(JumpUp, 20);
+								setTimeout( () => {
+									clearInterval(up);
+									const down = setInterval(JumpDown, 20);
 									setTimeout( () => {
-										clearInterval(up);
-										const down = setInterval(JumpDown, 20);
-										setTimeout( () => {
-											clearInterval(down);
-										},200)
-									}, 280);
-									
+										clearInterval(down);
+									},200)
+								}, 280);
+								break;
+					case 49 : fadeToAction('Yes',0.5); break;
+					case 50 : fadeToAction('Idle',0.5); break;
+					case 51 : fadeToAction('Walking',0.5); break;
+					case 52 : fadeToAction('Standing',0.5); break;
+					case 53 : fadeToAction('No',0.5); break;
+					
+					case 65 : moveLeft(); break;
+					case 68 : moveRight(); break;
+					case 27 : endGame(); break;
 
-									break;
-						case 49 : fadeToAction('Yes',0.5); break;
-						case 50 : fadeToAction('Idle',0.5); break;
-						case 51 : fadeToAction('Walking',0.5); break;
-						case 52 : fadeToAction('Standing',0.5); break;
-						case 53 : fadeToAction('No',0.5); break;
-						
-						case 65 : moveLeft(); break;
-						case 68 : moveRight(); break;
-						case 27 : endGame(); break;
+				}
+			});
+		})
 
-					}
-				});
-			})
+		const JumpUp = () => {
+			model.position.y += 0.6;
+		}
+		const JumpDown = () => {
+			model.position.y -= 0.6;
+		}
+		const moveRight = () => {
+			if (model.position.x <= -10 ) return;
+			model.position.x -= 5;
+		}
+		const moveLeft = () => {
+			if (model.position.x >= 10 ) return;
+			model.position.x += 5;
+		}
 
-			const JumpUp = () => {
-				model.position.y += 0.6;
-			}
-			const JumpDown = () => {
-				model.position.y -= 0.6;
-			}
-			const moveRight = () => {
-				if (model.position.x <= -10 ) return;
-				model.position.x -= 5;
-			}
-			const moveLeft = () => {
-				if (model.position.x >= 10 ) return;
-				model.position.x += 5;
-			}
+		const endGame = () => {
+			pauseGame = !pauseGame;
+			fadeToAction('Death',0.2);
 
-			const endGame = () => {
-				pauseGame = !pauseGame;
-				fadeToAction('Death',0.5);
-
-			}
-			const cameraRound = () => {
-				i += di;
-				camera.position.y = 5;
-				camera.position.x = -Math.sin(i)*r;
-				camera.position.z = Math.cos(i)*r;
-				camera.lookAt( new THREE.Vector3( 0, 3, 0 ) );
-			}
-			const generateHurdle = () => {
-				const geometryBox = new THREE.BoxGeometry( 4, 4, 4 );
-				const textureBox = new THREE.TextureLoader().load('./img/box.jpg');
-				const materialBox = new THREE.MeshBasicMaterial( {map: textureBox } );
-				const hurdle = new THREE.Mesh( geometryBox, materialBox );
-				let x = -15 + (1 + Math.floor(Math.random() * 5)) * 5;
-				hurdle.position.set(x, 3, 70);
-				hurdles.push(hurdle);
-				scene.add( hurdle );
-			}
+		}
+		const cameraRound = () => {
+			i += di;
+			camera.position.y = 5;
+			camera.position.x = -Math.sin(i)*r;
+			camera.position.z = Math.cos(i)*r;
+			camera.lookAt( new THREE.Vector3( 0, 3, 0 ) );
+		}
+		const generateHurdle = () => {
+			const geometryBox = new THREE.BoxGeometry( 4, 4, 4 );
+			const textureBox = new THREE.TextureLoader().load('./img/box.jpg');
+			const materialBox = new THREE.MeshBasicMaterial( {map: textureBox } );
+			const hurdle = new THREE.Mesh( geometryBox, materialBox );
+			let x = -15 + (1 + Math.floor(Math.random() * 5)) * 5;
+			hurdle.position.set(x, 3, 70);
+			hurdles.push(hurdle);
+			scene.add( hurdle );
+		}
 		</script>
 
 	</body>

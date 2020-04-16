@@ -113,3 +113,21 @@ a, button, input, select {
 	color: #777777;
 	font-size: 12px;
 }
+#score {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	position: absolute;
+	top:0px;
+	left: 80px;
+	width: 100px;
+	height: 44px;
+	border: 2px solid black;
+	background-color: blanchedalmond;
+	font-style: tahoma;
+	font-weight: bold;
+	color: #212121;
+
+	border-radius: 3px;
+
+}
